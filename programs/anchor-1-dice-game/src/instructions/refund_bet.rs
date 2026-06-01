@@ -1,0 +1,55 @@
+use anchor_lang::{prelude::*, system_program::{Transfer, transfer}};
+
+use crate::{error::DiceError, state::Bet};
+
+#[derive(Accounts)]
+pub struct RefundBet<'info> {
+    
+    #[account(mut)]
+    pub player: Signer<'info>,
+
+    /// CHECK: This is safe
+    pub house: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"vault", house.key().as_ref()],
+        bump
+    )]
+    pub vault: SystemAccount<'info>,
+    
+    #[account(
+        mut,
+        has_one = player,
+        close = player,
+        seeds = [b"bet", vault.key().as_ref(), player.key().as_ref(), bet.seed.to_be_bytes().as_ref()],
+        bump = bet.bump
+    )]
+    pub bet: Account<'info, Bet>,
+
+    pub system_program: Program<'info, System>
+}
+
+impl<'info> RefundBet<'info> {
+    pub fn refund_bet(&mut self, bumps: &RefundBetBumps) -> Result<()> {
+        let slot = Clock::get()?.slot;
+        let elapsed_slots = slot.checked_add(self.bet.slot).ok_or(DiceError::Overflow)?;
+        require!(elapsed_slots > 1000, DiceError::TimeoutNotReached);
+
+        let accounts = Transfer {
+            from: self.vault.to_account_info(),
+            to: self.player.to_account_info(),
+        };
+
+        let signer_seeds: &[&[&[u8]]] = 
+            &[&[b"vault", &self.house.key().to_bytes(), &[bumps.vault]]];
+
+        let ctx = CpiContext::new_with_signer(
+            self.system_program.key(), 
+            accounts, 
+            signer_seeds,
+        );
+
+        transfer(ctx, self.bet.amount)
+    }
+}
