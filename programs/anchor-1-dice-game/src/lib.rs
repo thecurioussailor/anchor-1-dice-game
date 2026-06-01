@@ -15,7 +15,11 @@ declare_id!("GWWbCt4NwKodxf3cBoovo9bjdXNjhMnWifKczX8KbkLJ");
 pub mod anchor_1_dice_game {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        initialize::handler(ctx)
+    pub fn initialize(ctx: Context<Initialize>, amount: u64) -> Result<()> {
+        ctx.accounts.init(amount)
     }
+
+    //place_bet
+    //resolve_bet
+    //refund_bet
 }
