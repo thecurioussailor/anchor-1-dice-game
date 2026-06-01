@@ -3,7 +3,7 @@ use anchor_lang::prelude::*;
 pub const HOUSE_EDGE_BASIS_POINTS: u16 = 150;
 pub const MIN_BET_LAMPORTS: u64 = 10_000_000;
 pub const MIN_ROLL: u8 = 1;
-pub const MAX_POLL: u8 = 99;
+pub const MAX_ROLL: u8 = 99;
 
 #[account]
 #[derive(InitSpace)]
