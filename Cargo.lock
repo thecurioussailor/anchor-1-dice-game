@@ -140,8 +140,12 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "litesvm",
+ "solana-ed25519-program",
+ "solana-instructions-sysvar",
  "solana-keypair",
  "solana-message",
+ "solana-sdk-ids",
+ "solana-sha256-hasher",
  "solana-signer",
  "solana-transaction",
 ]
@@ -2638,6 +2642,18 @@ dependencies = [
  "derivation-path",
  "qstring",
  "uriparse",
+]
+
+[[package]]
+name = "solana-ed25519-program"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1419197f1c06abf760043f6d64ba9d79a03ad5a43f18c7586471937122094da"
+dependencies = [
+ "bytemuck",
+ "bytemuck_derive",
+ "solana-instruction",
+ "solana-sdk-ids",
 ]
 
 [[package]]

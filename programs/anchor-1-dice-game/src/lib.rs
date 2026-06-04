@@ -19,7 +19,17 @@ pub mod anchor_1_dice_game {
         ctx.accounts.init(amount)
     }
 
-    //place_bet
-    //resolve_bet
+    pub fn place_bet(ctx: Context<PlaceBet>, seed:u128, roll: u8, amount: u64) -> Result<()> {
+        ctx.accounts.create_bet(&ctx.bumps, seed, roll, amount)?;
+        ctx.accounts.deposit(amount)
+    }
+
+    /// Resolves a bet using the house's Ed25519 signature as the randsome source.
+    /// 
+    /// Example: if the player chose `roll = 50`, they win on resolved rolls 1 through 49.
+    /// Lower target rolls are harder to hit, so they pay a larger multiplier after the house edge,
+    pub fn resolve_bet(ctx: Context<ResolveBet>, sig: Vec<u8>) -> Result<()> {
+        
+    }
     //refund_bet
 }

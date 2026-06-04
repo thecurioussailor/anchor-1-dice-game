@@ -1,0 +1,175 @@
+use anchor_lang::prelude::*;
+
+use solana_ed25519_program::{
+    Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
+    SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
+};
+
+use solana_instructions_sysvar::load_instruction_at_checked;
+use solana_sha256_hasher::hash;
+
+use crate::{
+    error::DiceError,
+    state::{
+        Bet,
+        HOUSE_EDGE_BASIS_POINTS
+    }
+};
+
+#[derive(Accounts)]
+pub struct ResolveBet<'info> {
+    #[account(mut)]
+    pub house: Signer<'info>,
+
+    #[account(mut)]
+    pub player: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"vault", house.key().as_ref()],
+        bump
+    )]
+    pub vault: SystemAccount<'info>,
+    
+    #[account(
+        mut,
+        has_one = player,
+        close = player,
+        seeds = [b"bet", vault.key().as_ref(), player.key().as_ref(), bet.seed.to_le_bytes().as_ref()],
+        bump = bet.bump
+    )]
+    pub bet: Account<'info, Bet>,
+
+    #[account(
+        address = solana_sdk_ids::sysvar::instructions::ID
+    )]
+    pub instruction_sysvar: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+struct Ed25519InstructionData<'a> {
+    public_key: &'a [u8],
+    signature: &'a [u8],
+    message: &'a [u8],
+}
+
+fn read_ed25519_instruction_data(data: &[u8], offset: u16, size: usize) -> Result<&[u8]> {
+    let start = usize::from(offset);
+
+    let end = start.checked_add(size).ok_or(DiceError::Overflow)?;
+
+    data.get(start..end)
+        .ok_or(DiceError::Ed25519DataLength.into())
+}
+
+fn deserialize_ed25519_instruction_data(data: &[u8]) -> Result<Ed25519InstructionData> {
+    require!(
+        data.len() >= SIGNATURE_OFFSETS_START,
+        DiceError::Ed25519Signature
+    );
+
+    require_eq!(data[0], 1, DiceError::Ed25519SignatureMustBeOne);
+
+    let offsets_start = SIGNATURE_OFFSETS_START;
+
+    let offsets_end = offsets_start
+        .checked_add(SIGNATURE_OFFSETS_SERIALIZED_SIZE)
+        .ok_or(DiceError::Ed25519Header)?;
+
+    let offsets_data = data
+        .get(offsets_start..offsets_end)
+        .ok_or(DiceError::Ed25519Header)?;
+
+    let offsets = Ed25519SignatureOffsets {
+        signature_offset: u16::from_le_bytes([offsets_data[0], offsets_data[1]]),
+        signature_instruction_index: u16::from_le_bytes([offsets_data[2], offsets_data[3]]),
+        public_key_offset: u16::from_le_bytes([offsets_data[4], offsets_data[5]]),
+        public_key_instruction_index: u16::from_le_bytes([offsets_data[6], offsets_data[7]]),
+        message_data_offset: u16::from_le_bytes([offsets_data[8], offsets_data[9]]),
+        message_data_size: u16::from_le_bytes([offsets_data[10], offsets_data[11]]),
+        message_instruction_index: u16::from_le_bytes([offsets_data[12], offsets_data[13]]),
+    };
+
+    require!(
+        offsets.signature_instruction_index == u16::MAX
+            && offsets.public_key_instruction_index == u16::MAX
+            && offsets.message_data_offset == u16::MAX,
+        DiceError::Ed25519Header
+    );
+
+    let public_key = 
+        read_ed25519_instruction_data(data, offsets.public_key_offset, PUBKEY_SERIALIZED_SIZE)?;
+
+    let signature = read_ed25519_instruction_data(
+        data, 
+        offsets.signature_offset, 
+        SIGNATURE_SERIALIZED_SIZE,
+    )?;
+
+    let message = read_ed25519_instruction_data(
+        data,
+        offsets.message_data_offset,
+        usize::from(offsets.message_data_size),
+    )?;
+
+    Ok(Ed25519InstructionData {
+        public_key,
+        signature,
+        message
+    })
+
+}
+
+impl<'info> ResolveBet<'info> {
+    pub fn verify_ed25519_signature(&mut self, sig: &[u8]) -> Result<()> {
+        let ix = load_instruction_at_checked(
+            0, 
+            &self.instruction_sysvar.to_account_info()
+        ).map_err(|_| DiceError::Ed25519Program)?;
+
+        require_eq!(
+            ix.program_id,
+            solana_sdk_ids::ed25519_program::ID,
+            DiceError::Ed25519Program
+        );
+
+        require_eq!(ix.accounts.len(), 0, DiceError::Ed25519Accounts);
+
+        let ed25519_data = deserialize_ed25519_instruction_data(&ix.data)?;
+
+        require_keys_eq!(
+            Pubkey::try_from(ed25519_data.public_key).map_err(|_| DiceError::Ed25519Pubkey)?,
+            self.house.key(),
+            DiceError::Ed25519Pubkey
+        );
+
+        require!(ed25519_data.signature == sig, DiceError::Ed25519Signature);
+
+        let expected_message = self.bet.to_slice();
+
+        require!(
+            ed25519_data.message == expected_message.as_slice(),
+            DiceError::Ed25519Message
+        );
+
+        Ok(())
+    }
+
+    pub fn resolve_bet(&mut self, bumps: &ResolveBetBumps, sig: &[u8]) -> Result<()> {
+        let hash = hash(sig).to_bytes();
+        let mut hash_16: [u8; 16] = [0; 16];
+
+        hash_16.copy_from_slice(&hash[0..16]);
+        let lower = u128::from_le_bytes(hash_16);
+        hash_16.copy_from_slice(&hash[16..32]);
+        let upper = u128::from_le_bytes(hash_16);
+
+        let roll = lower.wrapping_add(upper).wrapping_rem(100) as u8 + 1;
+
+        if self.bet.roll > roll {
+            let winning_numbers = self.bet.roll as u128 - 1;
+            let 
+        }
+    }
+}
