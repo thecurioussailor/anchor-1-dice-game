@@ -1,4 +1,4 @@
-use anchor_lang::prelude::*;
+use anchor_lang::{prelude::*, system_program::{Transfer, transfer}};
 
 use solana_ed25519_program::{
     Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
@@ -169,7 +169,33 @@ impl<'info> ResolveBet<'info> {
 
         if self.bet.roll > roll {
             let winning_numbers = self.bet.roll as u128 - 1;
-            let 
-        }
+            let payout = (self.bet.amount as u128)
+                .checked_mul(10_000 - HOUSE_EDGE_BASIS_POINTS as u128)
+                .ok_or(DiceError::Overflow)?
+                .checked_div(winning_numbers)
+                .ok_or(DiceError::Overflow)?
+                .checked_div(100)
+                .ok_or(DiceError::Overflow)?;
+
+            let payout = u64::try_from(payout).map_err(|_| DiceError::Overflow)?;
+
+            let signer_seeds: &[&[&[u8]]] = 
+                &[&[b"vault", &self.house.key().to_bytes(), &[bumps.vault]]];
+            
+            let accounts = Transfer {
+                from: self.vault.to_account_info(),
+                to: self.player.to_account_info(),
+            };
+
+            let ctx = CpiContext::new_with_signer(
+                self.system_program.key(), 
+                accounts, 
+                signer_seeds
+            );
+
+            transfer(ctx, payout)?
+        };
+
+        Ok(())
     }
 }
