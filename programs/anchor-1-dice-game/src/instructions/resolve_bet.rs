@@ -1,12 +1,6 @@
 use anchor_lang::{prelude::*, system_program::{Transfer, transfer}};
 
-use solana_ed25519_program::{
-    Ed25519SignatureOffsets, PUBKEY_SERIALIZED_SIZE, SIGNATURE_OFFSETS_SERIALIZED_SIZE,
-    SIGNATURE_OFFSETS_START, SIGNATURE_SERIALIZED_SIZE,
-};
-
 use solana_instructions_sysvar::load_instruction_at_checked;
-use solana_sha256_hasher::hash;
 
 use crate::{
     error::DiceError,
@@ -16,11 +10,16 @@ use crate::{
     }
 };
 
+/// Anchor instruction discriminator for `submit_roll`, i.e. the first 8 bytes
+/// of sha256("global:submit_roll").
+const SUBMIT_ROLL_DISCRIMINATOR: [u8; 8] = [226, 130, 208, 66, 181, 199, 113, 28];
+
 #[derive(Accounts)]
 pub struct ResolveBet<'info> {
     #[account(mut)]
     pub house: Signer<'info>,
 
+    /// CHECK: Player account is validated via has_one constraint on the bet PDA and receives lamports only
     #[account(mut)]
     pub player: UncheckedAccount<'info>,
 
@@ -30,7 +29,7 @@ pub struct ResolveBet<'info> {
         bump
     )]
     pub vault: SystemAccount<'info>,
-    
+
     #[account(
         mut,
         has_one = player,
@@ -40,6 +39,7 @@ pub struct ResolveBet<'info> {
     )]
     pub bet: Account<'info, Bet>,
 
+    /// CHECK: Validated by address constraint against the known instructions sysvar ID
     #[account(
         address = solana_sdk_ids::sysvar::instructions::ID
     )]
@@ -48,125 +48,46 @@ pub struct ResolveBet<'info> {
     pub system_program: Program<'info, System>,
 }
 
-struct Ed25519InstructionData<'a> {
-    public_key: &'a [u8],
-    signature: &'a [u8],
-    message: &'a [u8],
-}
-
-fn read_ed25519_instruction_data(data: &[u8], offset: u16, size: usize) -> Result<&[u8]> {
-    let start = usize::from(offset);
-
-    let end = start.checked_add(size).ok_or(DiceError::Overflow)?;
-
-    data.get(start..end)
-        .ok_or(DiceError::Ed25519DataLength.into())
-}
-
-fn deserialize_ed25519_instruction_data(data: &[u8]) -> Result<Ed25519InstructionData> {
-    require!(
-        data.len() >= SIGNATURE_OFFSETS_START,
-        DiceError::Ed25519Signature
-    );
-
-    require_eq!(data[0], 1, DiceError::Ed25519SignatureMustBeOne);
-
-    let offsets_start = SIGNATURE_OFFSETS_START;
-
-    let offsets_end = offsets_start
-        .checked_add(SIGNATURE_OFFSETS_SERIALIZED_SIZE)
-        .ok_or(DiceError::Ed25519Header)?;
-
-    let offsets_data = data
-        .get(offsets_start..offsets_end)
-        .ok_or(DiceError::Ed25519Header)?;
-
-    let offsets = Ed25519SignatureOffsets {
-        signature_offset: u16::from_le_bytes([offsets_data[0], offsets_data[1]]),
-        signature_instruction_index: u16::from_le_bytes([offsets_data[2], offsets_data[3]]),
-        public_key_offset: u16::from_le_bytes([offsets_data[4], offsets_data[5]]),
-        public_key_instruction_index: u16::from_le_bytes([offsets_data[6], offsets_data[7]]),
-        message_data_offset: u16::from_le_bytes([offsets_data[8], offsets_data[9]]),
-        message_data_size: u16::from_le_bytes([offsets_data[10], offsets_data[11]]),
-        message_instruction_index: u16::from_le_bytes([offsets_data[12], offsets_data[13]]),
-    };
-
-    require!(
-        offsets.signature_instruction_index == u16::MAX
-            && offsets.public_key_instruction_index == u16::MAX
-            && offsets.message_data_offset == u16::MAX,
-        DiceError::Ed25519Header
-    );
-
-    let public_key = 
-        read_ed25519_instruction_data(data, offsets.public_key_offset, PUBKEY_SERIALIZED_SIZE)?;
-
-    let signature = read_ed25519_instruction_data(
-        data, 
-        offsets.signature_offset, 
-        SIGNATURE_SERIALIZED_SIZE,
-    )?;
-
-    let message = read_ed25519_instruction_data(
-        data,
-        offsets.message_data_offset,
-        usize::from(offsets.message_data_size),
-    )?;
-
-    Ok(Ed25519InstructionData {
-        public_key,
-        signature,
-        message
-    })
-
-}
-
 impl<'info> ResolveBet<'info> {
-    pub fn verify_ed25519_signature(&mut self, sig: &[u8]) -> Result<()> {
-        let ix = load_instruction_at_checked(
-            0, 
-            &self.instruction_sysvar.to_account_info()
-        ).map_err(|_| DiceError::Ed25519Program)?;
-
-        require_eq!(
-            ix.program_id,
-            solana_sdk_ids::ed25519_program::ID,
-            DiceError::Ed25519Program
-        );
-
-        require_eq!(ix.accounts.len(), 0, DiceError::Ed25519Accounts);
-
-        let ed25519_data = deserialize_ed25519_instruction_data(&ix.data)?;
+    /// Reads the `submit_roll` instruction that must appear at index 0 of this
+    /// transaction (instruction introspection) and returns the roll value it
+    /// carries, after verifying it was signed by the house and targets this bet.
+    pub fn verify_roll_submission(&self) -> Result<u8> {
+        let ix = load_instruction_at_checked(0, &self.instruction_sysvar.to_account_info())?;
 
         require_keys_eq!(
-            Pubkey::try_from(ed25519_data.public_key).map_err(|_| DiceError::Ed25519Pubkey)?,
-            self.house.key(),
-            DiceError::Ed25519Pubkey
+            ix.program_id,
+            crate::ID,
+            DiceError::InvalidIntrospectedProgram
         );
-
-        require!(ed25519_data.signature == sig, DiceError::Ed25519Signature);
-
-        let expected_message = self.bet.to_slice();
 
         require!(
-            ed25519_data.message == expected_message.as_slice(),
-            DiceError::Ed25519Message
+            ix.data.len() == 9 && ix.data[0..8] == SUBMIT_ROLL_DISCRIMINATOR,
+            DiceError::InvalidIntrospectedInstruction
         );
 
-        Ok(())
+        require!(ix.accounts.len() == 2, DiceError::InvalidIntrospectedInstruction);
+
+        require_keys_eq!(
+            ix.accounts[0].pubkey,
+            self.house.key(),
+            DiceError::InvalidRollSigner
+        );
+        require!(ix.accounts[0].is_signer, DiceError::InvalidRollSigner);
+
+        require_keys_eq!(
+            ix.accounts[1].pubkey,
+            self.bet.key(),
+            DiceError::BetMismatch
+        );
+
+        let roll = ix.data[8];
+        require!(roll >= 1 && roll <= 100, DiceError::InvalidRollValue);
+
+        Ok(roll)
     }
 
-    pub fn resolve_bet(&mut self, bumps: &ResolveBetBumps, sig: &[u8]) -> Result<()> {
-        let hash = hash(sig).to_bytes();
-        let mut hash_16: [u8; 16] = [0; 16];
-
-        hash_16.copy_from_slice(&hash[0..16]);
-        let lower = u128::from_le_bytes(hash_16);
-        hash_16.copy_from_slice(&hash[16..32]);
-        let upper = u128::from_le_bytes(hash_16);
-
-        let roll = lower.wrapping_add(upper).wrapping_rem(100) as u8 + 1;
-
+    pub fn resolve_bet(&mut self, bumps: &ResolveBetBumps, roll: u8) -> Result<()> {
         if self.bet.roll > roll {
             let winning_numbers = self.bet.roll as u128 - 1;
             let payout = (self.bet.amount as u128)
@@ -179,17 +100,17 @@ impl<'info> ResolveBet<'info> {
 
             let payout = u64::try_from(payout).map_err(|_| DiceError::Overflow)?;
 
-            let signer_seeds: &[&[&[u8]]] = 
+            let signer_seeds: &[&[&[u8]]] =
                 &[&[b"vault", &self.house.key().to_bytes(), &[bumps.vault]]];
-            
+
             let accounts = Transfer {
                 from: self.vault.to_account_info(),
                 to: self.player.to_account_info(),
             };
 
             let ctx = CpiContext::new_with_signer(
-                self.system_program.key(), 
-                accounts, 
+                self.system_program.key(),
+                accounts,
                 signer_seeds
             );
 

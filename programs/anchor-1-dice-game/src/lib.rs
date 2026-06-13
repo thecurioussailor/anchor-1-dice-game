@@ -24,15 +24,23 @@ pub mod anchor_1_dice_game {
         ctx.accounts.deposit(amount)
     }
 
-    /// Resolves a bet using the house's Ed25519 signature as the randsome source.
-    /// 
-    /// Example: if the player chose `roll = 50`, they win on resolved rolls 1 through 49.
-    /// Lower target rolls are harder to hit, so they pay a larger multiplier after the house edge,
-    pub fn resolve_bet(ctx: Context<ResolveBet>, sig: Vec<u8>) -> Result<()> {
-        ctx.accounts.verify_ed25519_signature(&sig)?;
-        ctx.accounts.resolve_bet(&ctx.bumps, &sig)
+    /// Submits the resolved roll for a bet. This instruction must be placed
+    /// immediately before `resolve_bet` in the same transaction - `resolve_bet`
+    /// uses instruction introspection to read the `roll` value from here.
+    pub fn submit_roll(ctx: Context<SubmitRoll>, roll: u8) -> Result<()> {
+        ctx.accounts.submit_roll(roll)
     }
-    //refund_bet
+
+    /// Resolves a bet using the `roll` value submitted via the preceding
+    /// `submit_roll` instruction in the same transaction (verified through
+    /// instruction introspection).
+    ///
+    /// Example: if the player chose `roll = 50`, they win on resolved rolls 1 through 49.
+    /// Lower target rolls are harder to hit, so they pay a larger multiplier after the house edge.
+    pub fn resolve_bet(ctx: Context<ResolveBet>) -> Result<()> {
+        let roll = ctx.accounts.verify_roll_submission()?;
+        ctx.accounts.resolve_bet(&ctx.bumps, roll)
+    }
 
     pub fn refund_bet(ctx: Context<RefundBet>) -> Result<()> {
         ctx.accounts.refund_bet(&ctx.bumps)

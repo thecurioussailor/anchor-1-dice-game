@@ -16,7 +16,7 @@ pub struct PlaceBet<'info> {
     #[account(mut)]
     pub player: Signer<'info>,
 
-    //CHECK: This is safe
+    /// CHECK: House account is only used as a seed for the vault PDA derivation, no data is read or written
     pub house: UncheckedAccount<'info>,
 
     #[account(
@@ -48,7 +48,7 @@ impl<'info> PlaceBet<'info> {
     ) -> Result<()>{
         require!(amount >= MIN_BET_LAMPORTS, DiceError::MinimumBet);
         require!(roll >= MIN_ROLL, DiceError::MinimumRoll);
-        require!(roll >= MAX_ROLL, DiceError::MaximumRoll);
+        require!(roll <= MAX_ROLL, DiceError::MaximumRoll);
 
         self.bet.set_inner(Bet {
             slot: Clock::get()?.slot,

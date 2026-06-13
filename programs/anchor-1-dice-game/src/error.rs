@@ -24,27 +24,18 @@ pub enum DiceError {
     #[msg("Timeout yet not reached")]
     TimeoutNotReached,
 
-    #[msg("Ed25519 Header Error")]
-    Ed25519Header,
+    #[msg("Introspected instruction must target this program")]
+    InvalidIntrospectedProgram,
 
-    #[msg("Ed25519 Pubkey Error")]
-    Ed25519Pubkey,
+    #[msg("Introspected instruction is not a SubmitRoll instruction")]
+    InvalidIntrospectedInstruction,
 
-    #[msg("Ed25519 Message Error")]
-    Ed25519Message,
+    #[msg("SubmitRoll instruction must be signed by the house")]
+    InvalidRollSigner,
 
-    #[msg("Ed25519 Signature Error")]
-    Ed25519Signature,
+    #[msg("SubmitRoll instruction does not reference this bet")]
+    BetMismatch,
 
-    #[msg("Ed25519 Program Error")]
-    Ed25519Program,
-
-    #[msg("Ed25519 Accounts Error")]
-    Ed25519Accounts,
-
-    #[msg("Ed25519 Data Length Error")]
-    Ed25519DataLength,
-
-    #[msg("Ed25519 instruction must contain exactly one signature")]
-    Ed25519SignatureMustBeOne,
+    #[msg("Roll value must be between 1 and 100")]
+    InvalidRollValue,
 }
